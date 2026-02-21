@@ -70,5 +70,8 @@
 			"@types/react-dom": "^18.3.5",
 			"zod": "3.25.76"
 		}
+	},
+	"dependencies": {
+		"js-yaml": "^4.1.1"
 	}
 }
