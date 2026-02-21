@@ -11,6 +11,7 @@
 import path from "path"
 import * as fs from "fs/promises"
 import { isBinaryFile } from "isbinaryfile"
+import { computeContentHash } from "../../utils/crypto"
 
 import type { ReadFileParams, ReadFileMode, ReadFileToolParams, FileEntry, LineRange } from "@roo-code/types"
 import { isLegacyReadFileParams, type ClineSayTool } from "@roo-code/types"
@@ -216,6 +217,11 @@ export class ReadFileTool extends BaseTool<"read_file"> {
 					// (they become U+FFFD replacement characters instead of throwing)
 					const buffer = await fs.readFile(fullPath)
 					const fileContent = buffer.toString("utf-8")
+
+					// Capture read hash for optimistic locking
+					const readHash = computeContentHash(fileContent)
+					task.readHashes.set(fullPath, readHash)
+
 					const result = this.processTextFile(fileContent, entry)
 
 					await task.fileContextTracker.trackFileContext(relPath, "read_tool" as RecordSource)
@@ -768,6 +774,10 @@ export class ReadFileTool extends BaseTool<"read_file"> {
 
 				// Read text file
 				const rawContent = await fs.readFile(fullPath, "utf8")
+
+				// Capture read hash for optimistic locking
+				const readHash = computeContentHash(rawContent)
+				task.readHashes.set(fullPath, readHash)
 
 				// Handle line ranges if specified
 				let content: string

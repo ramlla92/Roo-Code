@@ -4,6 +4,7 @@ import fs from "fs/promises"
 
 import { type ClineSayTool, DEFAULT_WRITE_DELAY_MS } from "@roo-code/types"
 
+import { runPostWriteHooks, runPreToolHooks } from "../../hooks/hookEngine"
 import { Task } from "../task/Task"
 import { formatResponse } from "../prompts/responses"
 import { RecordSource } from "../context-tracking/FileContextTrackerTypes"
@@ -11,6 +12,7 @@ import { fileExistsAtPath, createDirectoriesForFile } from "../../utils/fs"
 import { stripLineNumbers, everyLineHasLineNumbers } from "../../integrations/misc/extract-text"
 import { getReadablePath } from "../../utils/path"
 import { isPathOutsideWorkspace } from "../../utils/pathUtils"
+import { computeFileHash } from "../../utils/crypto"
 import { unescapeHtmlEntities } from "../../utils/text-normalization"
 import { EXPERIMENT_IDS, experiments } from "../../shared/experiments"
 import { convertNewFileToUnifiedDiff, computeDiffStats, sanitizeUnifiedDiff } from "../diff/stats"
@@ -21,6 +23,8 @@ import { BaseTool, ToolCallbacks } from "./BaseTool"
 interface WriteToFileParams {
 	path: string
 	content: string
+	intent_id: string
+	mutation_class: "AST_REFACTOR" | "INTENT_EVOLUTION"
 }
 
 export class WriteToFileTool extends BaseTool<"write_to_file"> {
@@ -30,6 +34,28 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 		const { pushToolResult, handleError, askApproval } = callbacks
 		const relPath = params.path
 		let newContent = params.content
+
+		// Security Boundary: runPreToolHooks
+		const preHookResponse = await runPreToolHooks({
+			intentId: task.getActiveIntentId(),
+			toolName: "write_to_file",
+			targetPath: relPath,
+			content: newContent,
+			taskId: task.taskId,
+			modelIdentifier: task.api.getModel().id,
+			cwd: task.cwd,
+		})
+
+		if (!preHookResponse.allowed) {
+			pushToolResult(
+				JSON.stringify({
+					type: preHookResponse.type || "tool_blocked",
+					reason: preHookResponse.reason || "unknown",
+					message: preHookResponse.message,
+				}),
+			)
+			return
+		}
 
 		if (!relPath) {
 			task.consecutiveMistakeCount++
@@ -55,10 +81,25 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 			return
 		}
 
+		// Phase 4: Optimistic Locking
+		const absolutePath = path.resolve(task.cwd, relPath)
+		const currentHash = await computeFileHash(absolutePath)
+		const storedReadHash = task.readHashes.get(absolutePath)
+
+		if (storedReadHash !== undefined && currentHash !== null && storedReadHash !== currentHash) {
+			pushToolResult(
+				JSON.stringify({
+					type: "stale_file",
+					message: `Stale File: content of '${relPath}' changed since last read. Re-read the file before writing.`,
+				}),
+			)
+			return
+		}
+
 		const isWriteProtected = task.rooProtectedController?.isWriteProtected(relPath) || false
 
 		let fileExists: boolean
-		const absolutePath = path.resolve(task.cwd, relPath)
+		// absolutePath already resolved above for optimistic locking check
 
 		if (task.diffViewProvider.editType !== undefined) {
 			fileExists = task.diffViewProvider.editType === "modify"
@@ -181,6 +222,18 @@ export class WriteToFileTool extends BaseTool<"write_to_file"> {
 
 			await task.diffViewProvider.reset()
 			this.resetPartialState()
+
+			await runPostWriteHooks({
+				intentId: task.getActiveIntentId(),
+				toolName: "write_to_file",
+				targetPath: relPath,
+				content: newContent,
+				fileExists,
+				taskId: task.taskId,
+				modelIdentifier: task.api.getModel().id,
+				cwd: task.cwd,
+				mutationClass: params.mutation_class || "AST_REFACTOR",
+			})
 
 			task.processQueuedMessages()
 
