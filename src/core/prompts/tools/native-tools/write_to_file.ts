@@ -32,8 +32,18 @@ export default {
 					type: "string",
 					description: CONTENT_PARAMETER_DESCRIPTION,
 				},
+				intent_id: {
+					type: "string",
+					description: "The requirement/intent ID this write is fulfilling (from Phase 1).",
+				},
+				mutation_class: {
+					type: "string",
+					description:
+						"Semantic classification of the change: 'AST_REFACTOR' (cleanup/structural) or 'INTENT_EVOLUTION' (new behavior/feature).",
+					enum: ["AST_REFACTOR", "INTENT_EVOLUTION"],
+				},
 			},
-			required: ["path", "content"],
+			required: ["path", "content", "intent_id", "mutation_class"],
 			additionalProperties: false,
 		},
 	},
