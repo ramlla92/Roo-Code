@@ -1,0 +1,19 @@
+{
+	"name": "roo-demo-workspace",
+	"version": "1.0.0",
+	"description": "",
+	"main": "src/auth/auth.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1",
+		"lint": "echo \"Linting... (Simulated failure for demo)\" && exit 1",
+		"verify": "echo \"Verifying... (Simulated failure for demo)\" && exit 1"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"type": "commonjs",
+	"dependencies": {
+		"express": "^4.18.2",
+		"jsonwebtoken": "^9.0.3"
+	}
+}

@@ -1,0 +1,17 @@
+active_intents:
+  - id: INT-001
+    name: Build Weather API
+    status: IN_PROGRESS
+    owned_scope:
+      - src/weather
+    constraints:
+      - Must use existing HTTP client
+    acceptance_criteria:
+      - Unit tests in tests/weather pass
+  - id: INT-002
+    name: Refactor Auth Middleware
+    status: IN_PROGRESS
+    owned_scope:
+      - src/auth
+    constraints:
+      - Must maintain backward compatibility with Basic Auth
