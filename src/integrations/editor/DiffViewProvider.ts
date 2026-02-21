@@ -12,6 +12,7 @@ import { arePathsEqual, getReadablePath } from "../../utils/path"
 import { formatResponse } from "../../core/prompts/responses"
 import { diagnosticsToProblemsString, getNewDiagnostics } from "../diagnostics"
 import { Task } from "../../core/task/Task"
+import { computeContentHash } from "../../utils/crypto"
 
 import { DecorationController } from "./DecorationController"
 
@@ -68,6 +69,12 @@ export class DiffViewProvider {
 
 		if (fileExists) {
 			this.originalContent = await fs.readFile(absolutePath, "utf-8")
+			// Capture read hash for optimistic locking
+			const task = this.taskRef.deref()
+			if (task) {
+				const readHash = computeContentHash(this.originalContent)
+				task.readHashes.set(absolutePath, readHash)
+			}
 		} else {
 			this.originalContent = ""
 		}

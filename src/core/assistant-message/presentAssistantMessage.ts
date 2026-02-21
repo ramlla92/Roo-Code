@@ -34,6 +34,7 @@ import { updateTodoListTool } from "../tools/UpdateTodoListTool"
 import { runSlashCommandTool } from "../tools/RunSlashCommandTool"
 import { skillTool } from "../tools/SkillTool"
 import { generateImageTool } from "../tools/GenerateImageTool"
+import { recordLessonLearnedTool } from "../tools/RecordLessonLearnedTool"
 import { applyDiffTool as applyDiffToolClass } from "../tools/ApplyDiffTool"
 import { isValidToolName, validateToolUse } from "../tools/validateToolUse"
 import { codebaseSearchTool } from "../tools/CodebaseSearchTool"
@@ -363,6 +364,8 @@ export async function presentAssistantMessage(cline: Task) {
 						return `[${block.name} for '${block.params.question}']`
 					case "attempt_completion":
 						return `[${block.name}]`
+					case "select_active_intent":
+						return `[${block.name} for intent '${block.params.intent_id}']`
 					case "switch_mode":
 						return `[${block.name} to '${block.params.mode_slug}'${block.params.reason ? ` because: ${block.params.reason}` : ""}]`
 					case "codebase_search":
@@ -383,6 +386,8 @@ export async function presentAssistantMessage(cline: Task) {
 						return `[${block.name} for '${block.params.skill}'${block.params.args ? ` with args: ${block.params.args}` : ""}]`
 					case "generate_image":
 						return `[${block.name} for '${block.params.path}']`
+					case "record_lesson_learned":
+						return `[${block.name} for '${block.params.source}']`
 					default:
 						return `[${block.name}]`
 				}
@@ -796,6 +801,103 @@ export async function presentAssistantMessage(cline: Task) {
 						pushToolResult,
 					})
 					break
+				case "select_active_intent": {
+					cline.recordToolUsage("select_active_intent")
+					TelemetryService.instance.captureToolUsage(cline.taskId, "select_active_intent")
+
+					// Safer intent_id extraction and basic validation
+					const nativeArgs = block.nativeArgs as { intent_id?: unknown } | undefined
+					let intentId: string | undefined
+
+					if (nativeArgs && typeof nativeArgs.intent_id === "string" && nativeArgs.intent_id.trim()) {
+						intentId = nativeArgs.intent_id.trim()
+					} else if (nativeArgs && typeof nativeArgs.intent_id === "number") {
+						intentId = String(nativeArgs.intent_id)
+					} else if (typeof block.params.intent_id === "string" && block.params.intent_id.trim()) {
+						intentId = block.params.intent_id.trim()
+					} else if (typeof block.params.intent_id === "number") {
+						intentId = String(block.params.intent_id)
+					}
+
+					if (!intentId) {
+						await cline.say("error", "select_active_intent requires intent_id")
+						pushToolResult(formatResponse.toolError("select_active_intent missing intent_id"))
+						break
+					}
+
+					// Basic sanity check: allow common identifier characters only
+					const validIdRe = /^[A-Za-z0-9_\-:.]+$/
+					if (!validIdRe.test(intentId) || intentId.length > 256) {
+						await cline.say("error", "select_active_intent provided an invalid intent_id")
+						pushToolResult(formatResponse.toolError("select_active_intent invalid intent_id"))
+						break
+					}
+
+					cline.setActiveIntentId(intentId)
+
+					// Read intent details from .orchestration/active_intents.yaml
+					let intentContext = `<intent_context>\n  <id>${intentId}</id>\n</intent_context>`
+					try {
+						const yaml = await import("js-yaml")
+						const fs = await import("fs/promises")
+						const path = await import("path")
+						const filePath = path.join(cline.cwd, ".orchestration", "active_intents.yaml")
+
+						const fileContent = await fs.readFile(filePath, "utf8")
+						const data = yaml.load(fileContent) as any
+						const intent = data?.active_intents?.find((i: any) => i.id === intentId)
+
+						if (intent) {
+							const lines = [
+								"<intent_context>",
+								`  <id>${intent.id}</id>`,
+								`  <name>${intent.name || ""}</name>`,
+							]
+
+							if (intent.owned_scope?.length) {
+								lines.push("  <owned_scope>")
+								for (const p of intent.owned_scope) {
+									lines.push(`    <path>${p}</path>`)
+								}
+								lines.push("  </owned_scope>")
+							}
+
+							if (intent.constraints?.length) {
+								lines.push("  <constraints>")
+								for (const c of intent.constraints) {
+									lines.push(`    <rule>${c}</rule>`)
+								}
+								lines.push("  </constraints>")
+							}
+
+							if (intent.acceptance_criteria?.length) {
+								lines.push("  <acceptance_criteria>")
+								for (const ac of intent.acceptance_criteria) {
+									lines.push(`    <criterion>${ac}</criterion>`)
+								}
+								lines.push("  </acceptance_criteria>")
+							}
+
+							lines.push("</intent_context>")
+							intentContext = lines.join("\n")
+						}
+					} catch (error) {
+						console.error(`Error reading context for intent ${intentId}:`, error)
+						// Fallback to minimal context if file is missing or invalid
+					}
+
+					pushToolResult(formatResponse.toolResult(intentContext))
+					break
+				}
+
+				case "record_lesson_learned":
+					await recordLessonLearnedTool.handle(cline, block, {
+						askApproval,
+						handleError,
+						pushToolResult,
+					})
+					break
+
 				case "switch_mode":
 					await switchModeTool.handle(cline, block as ToolUse<"switch_mode">, {
 						askApproval,

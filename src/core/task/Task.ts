@@ -4,6 +4,8 @@ import os from "os"
 import crypto from "crypto"
 import { v7 as uuidv7 } from "uuid"
 import EventEmitter from "events"
+import * as fs from "fs/promises"
+import * as yaml from "js-yaml"
 
 import { AskIgnoredError } from "./AskIgnoredError"
 
@@ -202,6 +204,9 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 	 * @see {@link waitForModeInitialization} - To ensure initialization is complete
 	 */
 	private _taskMode: string | undefined
+
+	public activeIntentId: string | undefined
+	public readonly readHashes: Map<string, string> = new Map()
 
 	/**
 	 * Promise that resolves when the task mode has been initialized.
@@ -579,6 +584,63 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 			} else {
 				throw new Error("Either historyItem or task/images must be provided")
 			}
+		}
+	}
+
+	setActiveIntentId(intentId: string | undefined) {
+		this.activeIntentId = intentId
+	}
+
+	getActiveIntentId(): string | undefined {
+		return this.activeIntentId
+	}
+
+	private async loadActiveIntentContext(): Promise<string | undefined> {
+		if (!this.activeIntentId) {
+			return undefined
+		}
+
+		try {
+			const filePath = path.join(this.cwd, ".orchestration", "active_intents.yaml")
+			const fileContent = await fs.readFile(filePath, "utf8")
+			const data = yaml.load(fileContent) as any
+			const intent = data?.active_intents?.find((i: any) => i.id === this.activeIntentId)
+
+			if (!intent) {
+				return undefined
+			}
+
+			const lines = ["<intent_context>", `  <id>${intent.id}</id>`, `  <name>${intent.name || ""}</name>`]
+
+			if (intent.owned_scope?.length) {
+				lines.push("  <owned_scope>")
+				for (const p of intent.owned_scope) {
+					lines.push(`    <path>${p}</path>`)
+				}
+				lines.push("  </owned_scope>")
+			}
+
+			if (intent.constraints?.length) {
+				lines.push("  <constraints>")
+				for (const c of intent.constraints) {
+					lines.push(`    <rule>${c}</rule>`)
+				}
+				lines.push("  </constraints>")
+			}
+
+			if (intent.acceptance_criteria?.length) {
+				lines.push("  <acceptance_criteria>")
+				for (const ac of intent.acceptance_criteria) {
+					lines.push(`    <criterion>${ac}</criterion>`)
+				}
+				lines.push("  </acceptance_criteria>")
+			}
+
+			lines.push("</intent_context>")
+			return lines.join("\n")
+		} catch (error) {
+			console.error(`Error loading context for intent ${this.activeIntentId}:`, error)
+			return undefined
 		}
 	}
 
@@ -4275,12 +4337,20 @@ export class Task extends EventEmitter<TaskEvents> implements TaskLike {
 		// Reset the flag after using it
 		this.skipPrevResponseIdOnce = false
 
+		// Pre-LLM Hook: Inject active intent context if available
+		let effectiveSystemPrompt = systemPrompt
+		const intentContext = await this.loadActiveIntentContext()
+		if (intentContext) {
+			effectiveSystemPrompt = `${intentContext}\n\n${systemPrompt}`
+		}
+
 		// The provider accepts reasoning items alongside standard messages; cast to the expected parameter type.
 		const stream = this.api.createMessage(
-			systemPrompt,
+			effectiveSystemPrompt,
 			cleanConversationHistory as unknown as Anthropic.Messages.MessageParam[],
 			metadata,
 		)
+
 		const iterator = stream[Symbol.asyncIterator]()
 
 		// Set up abort handling - when the signal is aborted, clean up the controller reference
