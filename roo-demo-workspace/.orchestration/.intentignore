@@ -1,0 +1,6 @@
+# Intent-level exclusions
+dist/
+.turbo/
+.next/
+node_modules/
+*.spec.ts
