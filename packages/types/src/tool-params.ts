@@ -107,3 +107,13 @@ export interface GenerateImageParams {
 	path: string
 	image?: string
 }
+
+export interface SelectActiveIntentParams {
+	intent_id: string
+}
+
+export interface RecordLessonLearnedParams {
+	source: "lint" | "tests" | "manual_review"
+	message: string
+	intent_id?: string
+}
